@@ -1,39 +1,40 @@
-package com.narakeet;
-import org.apache.http.HttpResponse;
-import org.apache.http.client.HttpClient;
-import org.apache.http.client.methods.HttpPost;
-import org.apache.http.impl.client.HttpClientBuilder;
-import org.apache.http.entity.ByteArrayEntity;
-import java.nio.charset.StandardCharsets;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.util.Objects;
 
-public class Example {
-  public static void main(String[] args) throws java.io.FileNotFoundException, java.io.IOException {
+default:
+  image: docker:24-dind
+  services:
+    - docker:24-dind
+  before_script:
+    - docker info
+    - echo "$DOCKER_PAT" | docker login --username "$DOCKER_USER" --password-stdin
+    - |
+      apk add curl jq
+      ARCH=${CI_RUNNER_EXECUTABLE_ARCH#*/}
+      BUILDX_URL=$(curl -s https://raw.githubusercontent.com/docker/actions-toolkit/main/.github/buildx-lab-releases.json | jq -r ".latest.assets[] | select(endswith(\"linux-$ARCH\"))")
+      mkdir -vp ~/.docker/cli-plugins/
+      curl --silent -L --output ~/.docker/cli-plugins/docker-buildx $BUILDX_URL
+      chmod a+x ~/.docker/cli-plugins/docker-buildx
+    - docker buildx create --use --driver cloud cortex157/assd
 
-    String apiKey = Objects.requireNonNull(System.getenv("NARAKEET_API_KEY"), "NARAKEET_API_KEY environment variable is not set");
+variables:
+  IMAGE_NAME: cortex157/docker-build-cloud-demo
 
-    String voice = "brian";
-    String text = "Hello from Java!";
+# Build multi-platform image and push to a registry
+build_push:
+  stage: build
+  script:
+    - |
+      docker buildx build \
+        --platform linux/amd64,linux/arm64 \
+        --tag "${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}" \
+        --push .
 
-    String url = String.format("https://api.narakeet.com/text-to-speech/mp3?voice=%s", voice);
-    String outputFilePath = "output.mp3";
-
-    HttpClient httpClient = HttpClientBuilder.create().build();
-    HttpPost httpPost = new HttpPost(url);
-    httpPost.setHeader("Accept", "application/octet-stream");
-    httpPost.setHeader("Content-Type", "text/plain");
-    httpPost.setHeader("x-api-key", apiKey);
-
-    byte[] utf8Bytes = text.getBytes(StandardCharsets.UTF_8);
-    ByteArrayEntity requestBody = new ByteArrayEntity(utf8Bytes);
-    httpPost.setEntity(requestBody);
-
-    FileOutputStream outputStream = new FileOutputStream(outputFilePath);
-    HttpResponse response = httpClient.execute(httpPost);
-    response.getEntity().writeTo(outputStream);
-    outputStream.close();
-  }
-}
-
+# Build an image and discard the result
+build_cache:
+  stage: build
+  script:
+    - |
+      docker buildx build \
+        --platform linux/amd64,linux/arm64 \
+        --tag "${IMAGE_NAME}:${CI_COMMIT_SHORT_SHA}" \
+        --output type=cacheonly \
+        .
